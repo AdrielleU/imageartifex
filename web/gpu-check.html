@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU Check</title>
+<link rel="icon" type="image/svg+xml" href="/web/icon.svg">
+<style>
+  /* Same theme as the editor: the choice saved there (artifex.theme), else the system setting. */
+  :root { --bg: #1e1e1e; --text: #ddd; --line: #333; --muted: #888; --ok: #86efac; --warn: #fcd34d; color-scheme: dark; }
+  :root[data-theme="light"] { --bg: #f6f6f7; --text: #1f2328; --line: #dadade; --muted: #6b7079; --ok: #15803d; --warn: #a16207; color-scheme: light; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; margin: 24px; }
+  h1 { font-size: 18px; }
+  table { border-collapse: collapse; margin: 12px 0; }
+  td, th { border-bottom: 1px solid var(--line); padding: 4px 12px 4px 0; text-align: left; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .muted { color: var(--muted); }
+  #gpu { overflow-wrap: anywhere; }
+</style>
+<script>
+  (() => {
+    const system = matchMedia('(prefers-color-scheme: light)');
+    const saved = () => { try { return localStorage.getItem('artifex.theme'); } catch { return null; } };
+    const apply = () => {
+      const t = saved() || (system.matches ? 'light' : 'dark');
+      if (document.documentElement.dataset.theme !== t) document.documentElement.dataset.theme = t;
+    };
+    apply();
+    system.addEventListener('change', apply);
+    // switched in the editor tab: apply when told, and re-check whenever this tab is shown again
+    addEventListener('storage', e => { if (e.key === 'artifex.theme') apply(); });
+    addEventListener('focus', apply);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) apply(); });
+    setInterval(apply, 1000); // backstop: storage events between tabs aren't always delivered
+  })();
+</script>
+</head>
+<body>
+<h1>ImageArtifex GPU check</h1>
+<p id="gpu" class="muted">Checking…</p>
+<h2>Speed: adjustments on a 2400×1600 image</h2>
+<table id="speed"><tr><th>Adjustment</th><th>CPU (JavaScript)</th><th>GPU (WebGL2)</th></tr></table>
+<h2>Accuracy: GPU vs CPU result</h2>
+<p class="muted">Differences of ±1 per channel are rounding; a few larger ones can appear where posterize or threshold amplify them.</p>
+<table id="parity"><tr><th>Adjustment</th><th>Max difference</th><th>Values off by more than 1</th></tr></table>
+<script type="module">
+import { toneProgram, applyTone } from '/src/tone.js';
+import { createGpuTone, gpuInfo } from '/web/gpu.js';
+
+const $ = s => document.querySelector(s);
+const row = (table, cells) => $(table).insertAdjacentHTML('beforeend', `<tr>${cells.map(c => `<td>${c}</td>`).join('')}</tr>`);
+const gpu = createGpuTone(), info = gpu?.info ?? gpuInfo();
+$('#gpu').className = info.software ? 'warn' : 'ok';
+$('#gpu').textContent = `${info.software ? 'Software rendering (no hardware GPU in use)' : 'Hardware GPU'}: ${info.renderer}`
+  + (gpu ? '' : ' — WebGL2 unavailable, GPU columns are skipped');
+
+const CASES = {
+  'Levels': { levels: { value: { inLow: 20, inHigh: 230, gamma: 1.3 } } },
+  'Curves': { curves: { value: [[0, 0], [64, 44], [192, 212], [255, 255]] } },
+  'Exposure': { exposure: { stops: 0.7, blackLevel: 0.01 } },
+  'Color balance': { colorBalance: { midtones: { cyanRed: 40, yellowBlue: -30 }, preserveLuminosity: false } },
+  'Color balance (preserve)': { colorBalance: { highlights: { cyanRed: -50 }, preserveLuminosity: true } },
+  'Hue-chroma': { hueChroma: { hue: 75, chroma: -20, lightness: 8 } },
+  'Posterize': { posterize: 5 },
+  'Threshold': { threshold: { low: 100, high: 200, channel: 'value' } },
+  'Color to alpha': { colorToAlpha: { color: '#ffffff', transparency: 0.05, opacity: 0.9 } },
+};
+
+function noise(W, H) {
+  const c = Object.assign(document.createElement('canvas'), { width: W, height: H }), x = c.getContext('2d', { willReadFrequently: true });
+  const img = x.createImageData(W, H);
+  let s = 9; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < W * H; i++) img.data.set([r() * 256, r() * 256, ((i % W) * 255) / W, i % 7 === 0 ? 0 : 255 * (0.3 + 0.7 * r())], i * 4);
+  x.putImageData(img, 0, 0);
+  return c;
+}
+const read = c => {
+  const o = Object.assign(document.createElement('canvas'), { width: c.width, height: c.height }), x = o.getContext('2d', { willReadFrequently: true });
+  x.drawImage(c, 0, 0);
+  return x.getImageData(0, 0, c.width, c.height).data;
+};
+const idle = () => new Promise(r => setTimeout(r, 0)); // let the page breathe (theme changes, scrolling) between runs
+const time = fn => { fn(); const t = performance.now(); for (let i = 0; i < 3; i++) fn(); return (performance.now() - t) / 3; };
+
+// Speed: what one slider step costs (CPU: read pixels, process, write back; GPU: upload, shader, draw back).
+const big = noise(2400, 1600), bctx = big.getContext('2d', { willReadFrequently: true });
+const out = Object.assign(document.createElement('canvas'), { width: 2400, height: 1600 }), octx = out.getContext('2d');
+for (const [name, layer] of Object.entries(CASES)) {
+  const prog = toneProgram(layer);
+  const cpu = time(() => octx.putImageData(applyTone(bctx.getImageData(0, 0, 2400, 1600), prog), 0, 0));
+  await idle();
+  const g = gpu ? time(() => { octx.drawImage(gpu.apply(big, prog), 0, 0); octx.getImageData(0, 0, 1, 1); }) : null;
+  row('#speed', [name, `${cpu.toFixed(1)} ms`, g == null ? '—' : `${g.toFixed(1)} ms${g < cpu ? ` <span class="ok">(${(cpu / g).toFixed(1)}× faster)</span>` : ''}`]);
+  await new Promise(r => setTimeout(r));
+}
+
+// Accuracy on a small image with varied colors and transparency.
+if (gpu) {
+  const small = noise(256, 128), sctx = small.getContext('2d', { willReadFrequently: true });
+  for (const [name, layer] of Object.entries(CASES)) {
+    const prog = toneProgram(layer), cpu = applyTone(sctx.getImageData(0, 0, 256, 128), prog).data, g = read(gpu.apply(small, prog));
+    let max = 0, over = 0;
+    for (let i = 0; i < cpu.length; i += 4) for (let c = 0; c < 4; c++) {
+      // compare premultiplied values, which is what gets composited
+      const a = c === 3 ? cpu[i + 3] : (cpu[i + c] * cpu[i + 3]) / 255, b = c === 3 ? g[i + 3] : (g[i + c] * g[i + 3]) / 255;
+      const d = Math.abs(a - b); max = Math.max(max, d); if (d > 1.01) over++;
+    }
+    row('#parity', [name, max.toFixed(2), String(over)]);
+  }
+}
+</script>
+</body>
+</html>

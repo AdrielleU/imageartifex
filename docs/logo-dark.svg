@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 72" width="360" height="72">
+  <g transform="translate(4 4)">
+  <rect width="64" height="64" rx="16" fill="#111827"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="15.5" fill="none" stroke="#ffffff" stroke-opacity="0.12"/>
+  <rect x="8" y="13" width="48" height="38" rx="6" fill="none" stroke="#e5e7eb" stroke-width="2.6" stroke-opacity="0.9"/>
+  <path d="M15 23.5 H20.5 V45 H15 Z M23.5 45 L32.2 23 H37.3 L46 45 H40.4 L38.6 40.2 H30.9 L29.1 45 Z M32.4 35.9 H37.1 L34.75 29.1 Z" transform="translate(1.6 1.6)" fill="#8b5cf6" fill-rule="evenodd"/>
+  <path d="M15 23.5 H20.5 V45 H15 Z M23.5 45 L32.2 23 H37.3 L46 45 H40.4 L38.6 40.2 H30.9 L29.1 45 Z M32.4 35.9 H37.1 L34.75 29.1 Z" transform="translate(-0.9 -0.9)" fill="#22d3ee" fill-rule="evenodd" opacity="0.94"/>
+  <circle cx="48.5" cy="20.5" r="3" fill="#fde047"/>
+  </g>
+  <text x="84" y="47" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif" font-size="32" letter-spacing="-0.5" fill="#e5e7eb"><tspan font-weight="400">Image</tspan><tspan font-weight="700" fill="#22d3ee">Artifex</tspan></text>
+</svg>

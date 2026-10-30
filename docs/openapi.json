@@ -1,0 +1,4714 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ImageArtifex API",
+    "version": "0.1.0",
+    "description": "Layered image editing over HTTP. Every edit is an op appended to the project history with a plain-English description;\nthe browser editor, the CLI and API clients all share it, and edits show up live in open editors.\n\nTypical agent loop: GET /api/state (layers, selection, recent history) → POST /api/ops (one op or a batch) →\nGET /api/export to look at the result. Set \"author\" so the history shows who made each change.\nLayer and path references accept ids (\"L3\", \"P1\") or names. Coordinates are canvas pixels, origin top-left.\nThe server listens on 127.0.0.1 only; reach it from elsewhere through an SSH tunnel."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:4747",
+      "description": "Local ImageArtifex server (artifex serve)"
+    }
+  ],
+  "paths": {
+    "/api/state": {
+      "get": {
+        "operationId": "getState",
+        "summary": "Document, undo/redo state and full history",
+        "responses": {
+          "200": {
+            "description": "Current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "doc": {
+                      "type": "object",
+                      "description": "width, height, background, layers (bottom first), selection, paths"
+                    },
+                    "canUndo": {
+                      "type": "boolean"
+                    },
+                    "canRedo": {
+                      "type": "boolean"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "seq": {
+                            "type": "integer"
+                          },
+                          "ts": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "undone": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/project"
+          }
+        ]
+      }
+    },
+    "/api/ops": {
+      "post": {
+        "operationId": "applyOps",
+        "summary": "Apply one op, or a batch (applied in order, stops at the first error)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "op"
+                ],
+                "properties": {
+                  "op": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/Op"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/Op"
+                        }
+                      }
+                    ]
+                  },
+                  "author": {
+                    "type": "string",
+                    "description": "Shown in the history (default \"user\"); e.g. \"claude\" or your agent name"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/Entry"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Entry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The op was rejected (bad input, unknown layer, nothing selected, ...)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "index": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Entry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/project"
+          }
+        ]
+      }
+    },
+    "/api/upload": {
+      "post": {
+        "operationId": "uploadImage",
+        "summary": "Upload an image (→ asset for layer.add {type:\"image\", asset}) or a .psd / .xcf (→ file for doc.import {src: file})",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "File name hint (extension decides the type)"
+          },
+          {
+            "$ref": "#/components/parameters/project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/*": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored (content-addressed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "asset": {
+                      "type": "string"
+                    },
+                    "w": {
+                      "type": "integer"
+                    },
+                    "h": {
+                      "type": "integer"
+                    },
+                    "file": {
+                      "type": "string",
+                      "description": ".psd uploads: path for doc.import"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The op was rejected (bad input, unknown layer, nothing selected, ...)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "index": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Entry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/export": {
+      "get": {
+        "operationId": "exportImage",
+        "summary": "Render the flattened image",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "png",
+                "jpeg",
+                "webp",
+                "avif",
+                "psd",
+                "xcf",
+                "pdf",
+                "svg"
+              ],
+              "default": "png"
+            },
+            "description": "psd and xcf keep layers and groups; svg keeps shapes, text and gradients as vectors; pdf is one page"
+          },
+          {
+            "name": "dpi",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "default": 72
+            },
+            "description": "pdf: page size = pixels × 72 / dpi points"
+          },
+          {
+            "$ref": "#/components/parameters/project"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file (header x-artifex-notes lists anything that could not be kept)",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/vnd.adobe.photoshop": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pick": {
+      "get": {
+        "operationId": "pickColor",
+        "summary": "Color at a point: merged image, or one layer before/after its adjustments",
+        "parameters": [
+          {
+            "name": "x",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "y",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "layer",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Layer id or name"
+          },
+          {
+            "$ref": "#/components/parameters/project"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Color info (hex, r, g, b, alpha, value, lightness)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The op was rejected (bad input, unknown layer, nothing selected, ...)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "index": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Entry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/histogram": {
+      "get": {
+        "operationId": "histogram",
+        "summary": "Per-channel stats (min, 1%, mean, 99%, max) of the image or one layer (before its own tone)",
+        "parameters": [
+          {
+            "name": "layer",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/project"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stats per channel (value, r, g, b) and pixel count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The op was rejected (bad input, unknown layer, nothing selected, ...)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "index": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Entry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ops/catalog": {
+      "get": {
+        "operationId": "opCatalog",
+        "summary": "Every op with its summary, JSON Schema and an example",
+        "responses": {
+          "200": {
+            "description": "Op catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "operationId": "events",
+        "summary": "Server-Sent Events: an \"change\" event whenever the history changes",
+        "responses": {
+          "200": {
+            "description": "text/event-stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/project"
+          }
+        ]
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "operationId": "listProjects",
+        "summary": "Projects in the workspace folder (open one with ?project=<name> on any endpoint)",
+        "responses": {
+          "200": {
+            "description": "Workspace root and its projects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "root": {
+                      "type": "string"
+                    },
+                    "projects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "width": {
+                            "type": "integer"
+                          },
+                          "height": {
+                            "type": "integer"
+                          },
+                          "layers": {
+                            "type": "integer"
+                          },
+                          "modified": {
+                            "type": "string"
+                          },
+                          "start": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createProject",
+        "summary": "Create a project in the workspace",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "width": {
+                    "type": "integer",
+                    "default": 1200
+                  },
+                  "height": {
+                    "type": "integer",
+                    "default": 800
+                  },
+                  "background": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "default": "#ffffff"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The op was rejected (bad input, unknown layer, nothing selected, ...)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "index": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Entry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "operationId": "openapi",
+        "summary": "This document",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/assets/{file}": {
+      "get": {
+        "operationId": "asset",
+        "summary": "An uploaded or generated image asset",
+        "parameters": [
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/project"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image file"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Point": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "minItems": 2,
+        "maxItems": 2,
+        "description": "[x, y] in canvas pixels"
+      },
+      "Levels": {
+        "type": "object",
+        "description": "Levels for one channel (0–255).",
+        "properties": {
+          "inLow": {
+            "type": "number",
+            "description": "Input black",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "inHigh": {
+            "type": "number",
+            "description": "Input white",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "gamma": {
+            "type": "number",
+            "description": "Midtone gamma",
+            "exclusiveMinimum": 0
+          },
+          "outLow": {
+            "type": "number",
+            "description": "Output black"
+          },
+          "outHigh": {
+            "type": "number",
+            "description": "Output white"
+          }
+        }
+      },
+      "Curve": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[x, y] in canvas pixels"
+        },
+        "minItems": 2,
+        "description": "Curve control points [[in, out], ...] (0–255), monotone cubic through them"
+      },
+      "LayerProps": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Layer properties. Common ones are listed; type-specific ones (text: text/font/size/weight/color/align; shape: shape/w/h/fill/stroke/strokeWidth/radius; fill: color; gradient: kind/x1/y1/x2/y2/stops) are accepted too. A tone property set to null removes it.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Display name"
+          },
+          "visible": {
+            "type": "boolean",
+            "description": "Shown or hidden"
+          },
+          "opacity": {
+            "type": "number",
+            "description": "0–1",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "blend": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "multiply",
+              "screen",
+              "overlay",
+              "darken",
+              "lighten",
+              "color-dodge",
+              "color-burn",
+              "hard-light",
+              "soft-light",
+              "difference",
+              "exclusion",
+              "hue",
+              "saturation",
+              "color",
+              "luminosity"
+            ],
+            "description": "Blend mode"
+          },
+          "x": {
+            "type": "number",
+            "description": "Left edge in canvas px"
+          },
+          "y": {
+            "type": "number",
+            "description": "Top edge in canvas px"
+          },
+          "rotation": {
+            "type": "number",
+            "description": "Degrees, about the layer centre"
+          },
+          "scaleX": {
+            "type": "number",
+            "description": "Horizontal scale (negative flips)"
+          },
+          "scaleY": {
+            "type": "number",
+            "description": "Vertical scale (negative flips)"
+          },
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Group id to put the layer in (null = top level)"
+          },
+          "clip": {
+            "type": "boolean",
+            "description": "Clipping mask: only show where the nearest unclipped layer below has pixels"
+          },
+          "distort": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Distort filter (GIMP Distorts / Lens Distortion); null removes",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "twirl",
+                  "pinch",
+                  "ripple",
+                  "waves",
+                  "lens"
+                ]
+              },
+              "main": {
+                "type": "number",
+                "description": "lens: −100 (pincushion) … 100 (barrel)"
+              },
+              "edge": {
+                "type": "number",
+                "description": "lens −100…100"
+              },
+              "zoom": {
+                "type": "number",
+                "description": "lens −100…100"
+              },
+              "xShift": {
+                "type": "number",
+                "description": "lens −100…100"
+              },
+              "yShift": {
+                "type": "number",
+                "description": "lens −100…100"
+              },
+              "brighten": {
+                "type": "number",
+                "description": "lens −100…100"
+              },
+              "amount": {
+                "type": "number",
+                "description": "twirl: degrees; pinch: −1 (bulge) … 1 (pinch)"
+              },
+              "radius": {
+                "type": "number",
+                "description": "0–1 of the layer (1)"
+              },
+              "centerX": {
+                "type": "number",
+                "description": "0–1 (0.5)"
+              },
+              "centerY": {
+                "type": "number",
+                "description": "0–1 (0.5)"
+              },
+              "amplitude": {
+                "type": "number",
+                "description": "ripple/waves px (5)"
+              },
+              "wavelength": {
+                "type": "number",
+                "description": "ripple/waves px (20)"
+              },
+              "orientation": {
+                "type": "string",
+                "enum": [
+                  "horizontal",
+                  "vertical"
+                ]
+              }
+            }
+          },
+          "liquify": {
+            "type": "null",
+            "description": "Set to null to remove all liquify strokes"
+          },
+          "path": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Text on a path (set with text.onPath); {offset} moves the text along it; null = normal text"
+          },
+          "mesh": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Perspective / warp mesh in layer coordinates (use layer.perspective / layer.warp to set it in canvas px); null removes",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "perspective",
+                  "warp"
+                ]
+              },
+              "cols": {
+                "type": "integer",
+                "description": ""
+              },
+              "rows": {
+                "type": "integer",
+                "description": ""
+              },
+              "points": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "[x, y] in canvas pixels"
+                }
+              }
+            }
+          },
+          "locks": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Locks; null unlocks all",
+            "properties": {
+              "position": {
+                "type": "boolean",
+                "description": "No moving/transforming"
+              },
+              "pixels": {
+                "type": "boolean",
+                "description": "No painting/clearing"
+              },
+              "alpha": {
+                "type": "boolean",
+                "description": "Paint only where there are pixels already"
+              }
+            }
+          },
+          "adjust": {
+            "type": "object",
+            "description": "CSS-filter style adjustments",
+            "properties": {
+              "brightness": {
+                "type": "number",
+                "description": "% (100 = unchanged)"
+              },
+              "contrast": {
+                "type": "number",
+                "description": "% (100)"
+              },
+              "saturate": {
+                "type": "number",
+                "description": "% (100)"
+              },
+              "hue": {
+                "type": "number",
+                "description": "degrees (0)"
+              },
+              "blur": {
+                "type": "number",
+                "description": "px (0)"
+              },
+              "grayscale": {
+                "type": "number",
+                "description": "% (0)"
+              },
+              "sepia": {
+                "type": "number",
+                "description": "% (0)"
+              },
+              "invert": {
+                "type": "number",
+                "description": "% (0)"
+              }
+            }
+          },
+          "levels": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Per channel: { value|r|g|b: Levels | null }",
+            "properties": {
+              "value": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Levels"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "r": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Levels"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "g": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Levels"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "b": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Levels"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "curves": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Per channel: { value|r|g|b: Curve | null }",
+            "properties": {
+              "value": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Curve"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "r": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Curve"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "g": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Curve"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "b": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Curve"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "colorBalance": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "GIMP color balance; values -100..100 per range",
+            "properties": {
+              "shadows": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "cyanRed": {
+                    "type": "number",
+                    "description": ""
+                  },
+                  "magentaGreen": {
+                    "type": "number",
+                    "description": ""
+                  },
+                  "yellowBlue": {
+                    "type": "number",
+                    "description": ""
+                  }
+                }
+              },
+              "midtones": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "cyanRed": {
+                    "type": "number",
+                    "description": ""
+                  },
+                  "magentaGreen": {
+                    "type": "number",
+                    "description": ""
+                  },
+                  "yellowBlue": {
+                    "type": "number",
+                    "description": ""
+                  }
+                }
+              },
+              "highlights": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "cyanRed": {
+                    "type": "number",
+                    "description": ""
+                  },
+                  "magentaGreen": {
+                    "type": "number",
+                    "description": ""
+                  },
+                  "yellowBlue": {
+                    "type": "number",
+                    "description": ""
+                  }
+                }
+              },
+              "preserveLuminosity": {
+                "type": "boolean",
+                "description": "Keep lightness (default true)"
+              }
+            }
+          },
+          "hueChroma": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "GIMP hue-chroma (CIE LCh)",
+            "properties": {
+              "hue": {
+                "type": "number",
+                "description": "-180..180°"
+              },
+              "chroma": {
+                "type": "number",
+                "description": "-100..100"
+              },
+              "lightness": {
+                "type": "number",
+                "description": "-100..100"
+              }
+            }
+          },
+          "exposure": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "GIMP exposure (linear light)",
+            "properties": {
+              "stops": {
+                "type": "number",
+                "description": "-10..10"
+              },
+              "blackLevel": {
+                "type": "number",
+                "description": "-0.1..0.1"
+              }
+            }
+          },
+          "shadowsHighlights": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "GIMP shadows-highlights",
+            "properties": {
+              "shadows": {
+                "type": "number",
+                "description": "-100..100"
+              },
+              "highlights": {
+                "type": "number",
+                "description": "-100..100"
+              },
+              "whitepoint": {
+                "type": "number",
+                "description": "-10..10"
+              },
+              "radius": {
+                "type": "number",
+                "description": "0.1..1500 px (100)"
+              },
+              "compress": {
+                "type": "number",
+                "description": "0..100 (50)"
+              },
+              "shadowsColor": {
+                "type": "number",
+                "description": "0..100 (100)"
+              },
+              "highlightsColor": {
+                "type": "number",
+                "description": "0..100 (50)"
+              }
+            }
+          },
+          "sharpen": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Unsharp mask (GIMP)",
+            "properties": {
+              "radius": {
+                "type": "number",
+                "description": "0.1–100 px (3)"
+              },
+              "amount": {
+                "type": "number",
+                "description": "0–10 (0.5)"
+              },
+              "threshold": {
+                "type": "number",
+                "description": "0–255 (0)"
+              }
+            }
+          },
+          "denoise": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Noise reduction (edge-preserving)",
+            "properties": {
+              "strength": {
+                "type": "number",
+                "description": "0–100 (30)"
+              },
+              "radius": {
+                "type": "number",
+                "description": "1–10 px (2)"
+              }
+            }
+          },
+          "highPass": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "High pass: detail around mid-gray",
+            "properties": {
+              "radius": {
+                "type": "number",
+                "description": "0.5–100 px (4)"
+              }
+            }
+          },
+          "pixelate": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Pixelize (GIMP)",
+            "properties": {
+              "size": {
+                "type": "number",
+                "description": "block size px 1–512 (16)"
+              }
+            }
+          },
+          "emboss": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Emboss (GIMP)",
+            "properties": {
+              "azimuth": {
+                "type": "number",
+                "description": "0–360° (30)"
+              },
+              "elevation": {
+                "type": "number",
+                "description": "0–180° (45)"
+              },
+              "depth": {
+                "type": "number",
+                "description": "1–100 (20)"
+              },
+              "keepColor": {
+                "type": "number",
+                "description": "0 = gray relief, 1 = bump map"
+              }
+            }
+          },
+          "posterize": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 2,
+            "maximum": 256,
+            "description": "Levels per channel"
+          },
+          "threshold": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "low": {
+                "type": "number",
+                "description": "0–255"
+              },
+              "high": {
+                "type": "number",
+                "description": "0–255"
+              },
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "value",
+                  "r",
+                  "g",
+                  "b"
+                ]
+              }
+            }
+          },
+          "colorToAlpha": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "GIMP color to alpha",
+            "properties": {
+              "color": {
+                "type": "string",
+                "description": "CSS color, e.g. \"#ff8800\""
+              },
+              "transparency": {
+                "type": "number",
+                "description": "0–1 (0)"
+              },
+              "opacity": {
+                "type": "number",
+                "description": "0–1 (1)"
+              }
+            }
+          }
+        }
+      },
+      "Layer": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "additionalProperties": true,
+        "description": "A new layer. image: give \"src\" (a file path on the server) or \"asset\" (from POST /api/upload). paint: an empty layer for strokes.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "image",
+              "text",
+              "shape",
+              "paint",
+              "fill",
+              "gradient",
+              "group",
+              "adjustment"
+            ],
+            "description": "adjustment: holds tone/filter props (levels, curves, ...) that apply to every layer below it"
+          },
+          "src": {
+            "type": "string",
+            "description": "image: file path on the server to import"
+          },
+          "asset": {
+            "type": "string",
+            "description": "image: uploaded asset name"
+          },
+          "fit": {
+            "type": "string",
+            "enum": [
+              "contain",
+              "cover"
+            ],
+            "description": "image: scale to the canvas"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name"
+          },
+          "x": {
+            "type": "number",
+            "description": ""
+          },
+          "y": {
+            "type": "number",
+            "description": ""
+          },
+          "text": {
+            "type": "string",
+            "description": "text: the text (\\n for new lines)"
+          },
+          "size": {
+            "type": "number",
+            "description": "text: font size px"
+          },
+          "font": {
+            "type": "string",
+            "description": "text: font family"
+          },
+          "color": {
+            "type": "string",
+            "description": "text / fill color"
+          },
+          "boxWidth": {
+            "type": "number",
+            "description": "text: paragraph width px (text wraps inside it)"
+          },
+          "italic": {
+            "type": "boolean",
+            "description": "text: italic"
+          },
+          "lineHeight": {
+            "type": "number",
+            "description": "text: line spacing × size (1.2)"
+          },
+          "weight": {
+            "type": "string",
+            "description": "text: normal, bold, 300, 600, ..."
+          },
+          "align": {
+            "type": "string",
+            "enum": [
+              "left",
+              "center",
+              "right"
+            ]
+          },
+          "shape": {
+            "type": "string",
+            "enum": [
+              "rect",
+              "ellipse"
+            ]
+          },
+          "w": {
+            "type": "number",
+            "description": "shape width"
+          },
+          "h": {
+            "type": "number",
+            "description": "shape height"
+          },
+          "fill": {
+            "type": "string",
+            "description": "shape fill"
+          }
+        }
+      },
+      "SelectionShape": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "description": "rect/ellipse {x,y,w,h}; polygon {points}; path {subpaths}; wand {x,y,threshold?,contiguous?,layer?} (fuzzy select); color {x,y | color, threshold?, layer?} (select by color); alpha {layer}; all.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "rect",
+              "ellipse",
+              "polygon",
+              "path",
+              "wand",
+              "color",
+              "alpha",
+              "all"
+            ]
+          },
+          "x": {
+            "type": "number",
+            "description": ""
+          },
+          "y": {
+            "type": "number",
+            "description": ""
+          },
+          "w": {
+            "type": "number",
+            "description": ""
+          },
+          "h": {
+            "type": "number",
+            "description": ""
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            }
+          },
+          "threshold": {
+            "type": "number",
+            "description": "0–255 color distance (32)"
+          },
+          "contiguous": {
+            "type": "boolean",
+            "description": "wand: only connected pixels (true)"
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "color": {
+            "type": "string",
+            "description": "CSS color, e.g. \"#ff8800\""
+          },
+          "subpaths": {
+            "$ref": "#/components/schemas/Subpaths"
+          }
+        }
+      },
+      "Subpaths": {
+        "type": "array",
+        "description": "Bezier path: anchors with optional absolute handle positions (in/out); a missing handle is a sharp corner.",
+        "items": {
+          "type": "object",
+          "required": [
+            "anchors"
+          ],
+          "properties": {
+            "closed": {
+              "type": "boolean"
+            },
+            "anchors": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "description": ""
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": ""
+                  },
+                  "in": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "[x, y] in canvas pixels"
+                  },
+                  "out": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "[x, y] in canvas pixels"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Entry": {
+        "type": "object",
+        "description": "One history entry: the op as stored (names resolved to ids, files imported) and its plain-English text.",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "description": "Sequence number"
+          },
+          "ts": {
+            "type": "string",
+            "description": "ISO time"
+          },
+          "author": {
+            "type": "string",
+            "description": "Who made it (user, claude, cli, ...)"
+          },
+          "op": {
+            "type": "object"
+          },
+          "text": {
+            "type": "string",
+            "description": "Plain-English description"
+          }
+        }
+      },
+      "Op_canvas_new": {
+        "type": "object",
+        "title": "canvas.new",
+        "description": "Start the document (written by \"artifex init\"; normally not sent by clients)",
+        "required": [
+          "type",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "canvas.new"
+          },
+          "width": {
+            "type": "integer",
+            "description": ""
+          },
+          "height": {
+            "type": "integer",
+            "description": ""
+          },
+          "background": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "examples": [
+          {
+            "type": "canvas.new",
+            "width": 1200,
+            "height": 800,
+            "background": "#ffffff"
+          }
+        ]
+      },
+      "Op_canvas_resize": {
+        "type": "object",
+        "title": "canvas.resize",
+        "description": "Change the canvas size; layers keep their place relative to the anchor",
+        "required": [
+          "type",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "canvas.resize"
+          },
+          "width": {
+            "type": "integer",
+            "description": ""
+          },
+          "height": {
+            "type": "integer",
+            "description": ""
+          },
+          "anchor": {
+            "type": "string",
+            "enum": [
+              "center",
+              "top-left",
+              "top",
+              "top-right",
+              "left",
+              "right",
+              "bottom-left",
+              "bottom",
+              "bottom-right"
+            ]
+          }
+        },
+        "examples": [
+          {
+            "type": "canvas.resize",
+            "width": 1600,
+            "height": 900,
+            "anchor": "center"
+          }
+        ]
+      },
+      "Op_canvas_crop": {
+        "type": "object",
+        "title": "canvas.crop",
+        "description": "Crop the canvas to a rectangle, or to the selection bounds",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "canvas.crop"
+          },
+          "x": {
+            "type": "integer",
+            "description": ""
+          },
+          "y": {
+            "type": "integer",
+            "description": ""
+          },
+          "width": {
+            "type": "integer",
+            "description": ""
+          },
+          "height": {
+            "type": "integer",
+            "description": ""
+          },
+          "toSelection": {
+            "type": "boolean",
+            "description": "Crop to the selection bounds instead"
+          }
+        },
+        "examples": [
+          {
+            "type": "canvas.crop",
+            "x": 0,
+            "y": 0,
+            "width": 800,
+            "height": 600
+          }
+        ]
+      },
+      "Op_layer_paste": {
+        "type": "object",
+        "title": "layer.paste",
+        "description": "Paste layers from another project (or this one), editable, with their masks, adjustments and images",
+        "required": [
+          "type",
+          "ids"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.paste"
+          },
+          "from": {
+            "type": "string",
+            "description": "Project folder name in the same workspace, or a path (default: this project)"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Layer id (e.g. \"L3\") or name"
+            },
+            "minItems": 1
+          },
+          "inPlace": {
+            "type": "boolean",
+            "description": "Keep coordinates (default: keep their place relative to the canvas centre)"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.paste",
+            "from": "poster",
+            "ids": [
+              "Logo"
+            ]
+          }
+        ]
+      },
+      "Op_doc_import": {
+        "type": "object",
+        "title": "doc.import",
+        "description": "Import a layered file (PSD or GIMP XCF): its layers, groups, masks, opacity and blend modes, in one step",
+        "required": [
+          "type",
+          "src"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "doc.import"
+          },
+          "src": {
+            "type": "string",
+            "description": "Path on the server (absolute or relative to the project; POST /api/upload?name=x.psd returns one)"
+          },
+          "resize": {
+            "type": "boolean",
+            "description": "Set the canvas to the file size (default: only when the project is empty)"
+          },
+          "name": {
+            "type": "string",
+            "description": "File name to show in the history"
+          }
+        },
+        "examples": [
+          {
+            "type": "doc.import",
+            "src": "imports/3f2a9c1b7d4e.psd"
+          }
+        ]
+      },
+      "Op_canvas_scale": {
+        "type": "object",
+        "title": "canvas.scale",
+        "description": "Image size: resample everything to a new size (a missing side keeps the aspect ratio)",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "canvas.scale"
+          },
+          "width": {
+            "type": "integer",
+            "description": ""
+          },
+          "height": {
+            "type": "integer",
+            "description": ""
+          },
+          "percent": {
+            "type": "number",
+            "description": "e.g. 50 = half size"
+          }
+        },
+        "examples": [
+          {
+            "type": "canvas.scale",
+            "percent": 50
+          }
+        ]
+      },
+      "Op_guide_add": {
+        "type": "object",
+        "title": "guide.add",
+        "description": "Add a guide line (x = vertical line at that x; y = horizontal line)",
+        "required": [
+          "type",
+          "axis",
+          "pos"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "guide.add"
+          },
+          "axis": {
+            "type": "string",
+            "enum": [
+              "x",
+              "y"
+            ]
+          },
+          "pos": {
+            "type": "number",
+            "description": "px"
+          }
+        },
+        "examples": [
+          {
+            "type": "guide.add",
+            "axis": "x",
+            "pos": 300
+          }
+        ]
+      },
+      "Op_guide_remove": {
+        "type": "object",
+        "title": "guide.remove",
+        "description": "Remove a guide (by index, or by axis + pos)",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "guide.remove"
+          },
+          "index": {
+            "type": "integer",
+            "description": "0-based"
+          },
+          "axis": {
+            "type": "string",
+            "enum": [
+              "x",
+              "y"
+            ]
+          },
+          "pos": {
+            "type": "number",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "guide.remove",
+            "axis": "x",
+            "pos": 300
+          }
+        ]
+      },
+      "Op_guide_clear": {
+        "type": "object",
+        "title": "guide.clear",
+        "description": "Remove all guides",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "guide.clear"
+          }
+        },
+        "examples": [
+          {
+            "type": "guide.clear"
+          }
+        ]
+      },
+      "Op_canvas_background": {
+        "type": "object",
+        "title": "canvas.background",
+        "description": "Set the background color (null = transparent)",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "canvas.background"
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "examples": [
+          {
+            "type": "canvas.background",
+            "color": "#000000"
+          }
+        ]
+      },
+      "Op_layer_add": {
+        "type": "object",
+        "title": "layer.add",
+        "description": "Add a layer (image, text, shape, paint, fill, gradient)",
+        "required": [
+          "type",
+          "layer"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.add"
+          },
+          "layer": {
+            "$ref": "#/components/schemas/Layer"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Stack position (0 = bottom); default top"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.add",
+            "layer": {
+              "type": "text",
+              "text": "Hello",
+              "size": 64,
+              "color": "#ffffff",
+              "x": 40,
+              "y": 40
+            }
+          }
+        ]
+      },
+      "Op_layer_update": {
+        "type": "object",
+        "title": "layer.update",
+        "description": "Change layer properties: position, transform, opacity, blend, adjustments, tone",
+        "required": [
+          "type",
+          "id",
+          "props"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.update"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "props": {
+            "$ref": "#/components/schemas/LayerProps"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.update",
+            "id": "L2",
+            "props": {
+              "x": 10,
+              "opacity": 0.5,
+              "levels": {
+                "value": {
+                  "inLow": 20,
+                  "inHigh": 235
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Op_layer_remove": {
+        "type": "object",
+        "title": "layer.remove",
+        "description": "Delete a layer (a group is deleted with its contents)",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.remove"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.remove",
+            "id": "L2"
+          }
+        ]
+      },
+      "Op_layer_group": {
+        "type": "object",
+        "title": "layer.group",
+        "description": "Put layers into a new group (at the position of the topmost one)",
+        "required": [
+          "type",
+          "ids"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.group"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Layer id (e.g. \"L3\") or name"
+            },
+            "minItems": 1
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.group",
+            "ids": [
+              "L2",
+              "L3"
+            ],
+            "name": "Logo"
+          }
+        ]
+      },
+      "Op_layer_ungroup": {
+        "type": "object",
+        "title": "layer.ungroup",
+        "description": "Remove a group, keeping its layers",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.ungroup"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.ungroup",
+            "id": "Logo"
+          }
+        ]
+      },
+      "Op_layer_move": {
+        "type": "object",
+        "title": "layer.move",
+        "description": "Move a layer, or everything in a group, by (dx, dy)",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.move"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "dx": {
+            "type": "number",
+            "description": "px"
+          },
+          "dy": {
+            "type": "number",
+            "description": "px"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.move",
+            "id": "Logo",
+            "dx": 20,
+            "dy": -10
+          }
+        ]
+      },
+      "Op_layer_duplicate": {
+        "type": "object",
+        "title": "layer.duplicate",
+        "description": "Duplicate a layer",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.duplicate"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          },
+          "dx": {
+            "type": "number",
+            "description": "offset"
+          },
+          "dy": {
+            "type": "number",
+            "description": "offset"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.duplicate",
+            "id": "L2",
+            "dx": 20,
+            "dy": 0
+          }
+        ]
+      },
+      "Op_layer_reorder": {
+        "type": "object",
+        "title": "layer.reorder",
+        "description": "Move a layer in the stack",
+        "required": [
+          "type",
+          "id",
+          "index"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.reorder"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "index": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "description": "0 = bottom"
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "top",
+                  "bottom",
+                  "up",
+                  "down"
+                ]
+              }
+            ]
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.reorder",
+            "id": "L2",
+            "index": "top"
+          }
+        ]
+      },
+      "Op_layer_merge": {
+        "type": "object",
+        "title": "layer.merge",
+        "description": "Merge layers into one image layer: ids, merge down, or flatten everything",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.merge"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Layer id (e.g. \"L3\") or name"
+            }
+          },
+          "down": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "flatten": {
+            "type": "boolean",
+            "description": "Merge every layer and the background"
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.merge",
+            "down": "L3"
+          }
+        ]
+      },
+      "Op_layer_mask": {
+        "type": "object",
+        "title": "layer.mask",
+        "description": "Add a layer mask from the selection (keep = show only the selection, hide = hide it)",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.mask"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "keep",
+              "hide"
+            ]
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.mask",
+            "id": "L2",
+            "mode": "keep"
+          }
+        ]
+      },
+      "Op_layer_maskStroke": {
+        "type": "object",
+        "title": "layer.maskStroke",
+        "description": "Paint on a layer mask: hide along the stroke, or reveal (creates the mask if needed)",
+        "required": [
+          "type",
+          "id",
+          "mode",
+          "stroke"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.maskStroke"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "hide",
+              "reveal"
+            ]
+          },
+          "stroke": {
+            "type": "object",
+            "required": [
+              "points"
+            ],
+            "properties": {
+              "points": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "[x, y] in canvas pixels"
+                },
+                "minItems": 1,
+                "description": "Stroke points [[x, y], ...] in canvas pixels"
+              },
+              "size": {
+                "type": "number",
+                "description": "px (20)"
+              },
+              "hardness": {
+                "type": "number",
+                "description": "0–1 (0.75)"
+              }
+            }
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.maskStroke",
+            "id": "Photo",
+            "mode": "hide",
+            "stroke": {
+              "points": [
+                [
+                  100,
+                  100
+                ],
+                [
+                  160,
+                  140
+                ]
+              ],
+              "size": 50,
+              "hardness": 0.3
+            }
+          }
+        ]
+      },
+      "Op_layer_unmask": {
+        "type": "object",
+        "title": "layer.unmask",
+        "description": "Remove a layer's masks",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.unmask"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.unmask",
+            "id": "L2"
+          }
+        ]
+      },
+      "Op_layer_fromSelection": {
+        "type": "object",
+        "title": "layer.fromSelection",
+        "description": "Copy (or cut) the selected part of a layer to a new layer",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.fromSelection"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "cut": {
+            "type": "boolean",
+            "description": "Remove it from the source (cut)"
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.fromSelection",
+            "id": "L2",
+            "cut": false
+          }
+        ]
+      },
+      "Op_text_onPath": {
+        "type": "object",
+        "title": "text.onPath",
+        "description": "Put a text layer on a path (its own copy; rotation/scale reset); offset its start, or remove with props {path: null}",
+        "required": [
+          "type",
+          "id",
+          "path"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text.onPath"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "path": {
+            "type": "string",
+            "description": "Path id (e.g. \"P1\") or name"
+          },
+          "offset": {
+            "type": "number",
+            "description": "px along the path (0)"
+          }
+        },
+        "examples": [
+          {
+            "type": "text.onPath",
+            "id": "Title",
+            "path": "Arch",
+            "offset": 10
+          }
+        ]
+      },
+      "Op_layer_liquify": {
+        "type": "object",
+        "title": "layer.liquify",
+        "description": "Liquify stroke (push / twirl / bloat / pinch) — non-destructive, reset with props {liquify: null}",
+        "required": [
+          "type",
+          "id",
+          "stroke"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.liquify"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "stroke": {
+            "type": "object",
+            "required": [
+              "points"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "push",
+                  "twirl",
+                  "bloat",
+                  "pinch"
+                ]
+              },
+              "points": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "[x, y] in canvas pixels"
+                },
+                "minItems": 1,
+                "description": "Stroke points [[x, y], ...] in canvas pixels"
+              },
+              "size": {
+                "type": "number",
+                "description": "px (60)"
+              },
+              "strength": {
+                "type": "number",
+                "description": "0–1 (0.5)"
+              }
+            }
+          },
+          "space": {
+            "type": "string",
+            "enum": [
+              "canvas",
+              "layer"
+            ],
+            "description": "Coordinates of points/size (canvas)"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.liquify",
+            "id": "Face",
+            "stroke": {
+              "mode": "push",
+              "points": [
+                [
+                  200,
+                  200
+                ],
+                [
+                  230,
+                  200
+                ]
+              ],
+              "size": 80,
+              "strength": 0.6
+            }
+          }
+        ]
+      },
+      "Op_layer_perspective": {
+        "type": "object",
+        "title": "layer.perspective",
+        "description": "Perspective transform: put the layer's corners at these canvas points",
+        "required": [
+          "type",
+          "id",
+          "corners"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.perspective"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "corners": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "Top-left, top-right, bottom-right, bottom-left (canvas px)"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.perspective",
+            "id": "Poster",
+            "corners": [
+              [
+                120,
+                80
+              ],
+              [
+                480,
+                40
+              ],
+              [
+                500,
+                360
+              ],
+              [
+                100,
+                330
+              ]
+            ]
+          }
+        ]
+      },
+      "Op_layer_warp": {
+        "type": "object",
+        "title": "layer.warp",
+        "description": "Warp: move points of a grid over the layer (creates a cols×rows grid if needed)",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.warp"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "cols": {
+            "type": "integer",
+            "description": "1–8 (3)"
+          },
+          "rows": {
+            "type": "integer",
+            "description": "1–8 (3)"
+          },
+          "moves": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "i": {
+                  "type": "integer",
+                  "description": "column 0..cols"
+                },
+                "j": {
+                  "type": "integer",
+                  "description": "row 0..rows"
+                },
+                "dx": {
+                  "type": "number",
+                  "description": "canvas px"
+                },
+                "dy": {
+                  "type": "number",
+                  "description": "canvas px"
+                }
+              }
+            }
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.warp",
+            "id": "Flag",
+            "cols": 3,
+            "rows": 2,
+            "moves": [
+              {
+                "i": 1,
+                "j": 1,
+                "dx": 0,
+                "dy": 30
+              },
+              {
+                "i": 2,
+                "j": 1,
+                "dx": 0,
+                "dy": -30
+              }
+            ]
+          }
+        ]
+      },
+      "Op_layer_autoLevels": {
+        "type": "object",
+        "title": "layer.autoLevels",
+        "description": "GIMP-style auto levels (stretch each channel, clipping 0.5%)",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.autoLevels"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.autoLevels",
+            "id": "L2"
+          }
+        ]
+      },
+      "Op_layer_colorToAlpha": {
+        "type": "object",
+        "title": "layer.colorToAlpha",
+        "description": "GIMP color to alpha; \"at\" samples the color from the layer",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "layer.colorToAlpha"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "color": {
+            "type": "string",
+            "description": "CSS color, e.g. \"#ff8800\""
+          },
+          "at": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[x, y] in canvas pixels"
+          },
+          "transparency": {
+            "type": "number",
+            "description": "0–1"
+          },
+          "opacity": {
+            "type": "number",
+            "description": "0–1"
+          }
+        },
+        "examples": [
+          {
+            "type": "layer.colorToAlpha",
+            "id": "L2",
+            "at": [
+              10,
+              10
+            ]
+          }
+        ]
+      },
+      "Op_selection_set": {
+        "type": "object",
+        "title": "selection.set",
+        "description": "Select (rect, ellipse, polygon, path, fuzzy/wand, by color, layer alpha, all)",
+        "required": [
+          "type",
+          "shape"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.set"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "add",
+              "subtract",
+              "intersect"
+            ]
+          },
+          "shape": {
+            "$ref": "#/components/schemas/SelectionShape"
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.set",
+            "mode": "replace",
+            "shape": {
+              "type": "ellipse",
+              "x": 100,
+              "y": 100,
+              "w": 300,
+              "h": 200
+            }
+          }
+        ]
+      },
+      "Op_selection_all": {
+        "type": "object",
+        "title": "selection.all",
+        "description": "Select everything",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.all"
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.all"
+          }
+        ]
+      },
+      "Op_selection_none": {
+        "type": "object",
+        "title": "selection.none",
+        "description": "Deselect",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.none"
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.none"
+          }
+        ]
+      },
+      "Op_selection_invert": {
+        "type": "object",
+        "title": "selection.invert",
+        "description": "Invert the selection",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.invert"
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.invert"
+          }
+        ]
+      },
+      "Op_selection_scissors": {
+        "type": "object",
+        "title": "selection.scissors",
+        "description": "Intelligent scissors: an outline through these anchors that snaps to edges",
+        "required": [
+          "type",
+          "anchors"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.scissors"
+          },
+          "anchors": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "minItems": 3
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "add",
+              "subtract",
+              "intersect"
+            ]
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.scissors",
+            "anchors": [
+              [
+                120,
+                80
+              ],
+              [
+                300,
+                70
+              ],
+              [
+                320,
+                260
+              ],
+              [
+                110,
+                250
+              ]
+            ]
+          }
+        ]
+      },
+      "Op_selection_foreground": {
+        "type": "object",
+        "title": "selection.foreground",
+        "description": "Foreground select: separate the object from its background inside a rough outline (or the current selection)",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.foreground"
+          },
+          "outline": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "description": "Rough polygon around the object (default: the current selection)"
+          },
+          "strokes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "points": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "description": "[x, y] in canvas pixels"
+                  },
+                  "minItems": 1,
+                  "description": "Stroke points [[x, y], ...] in canvas pixels"
+                },
+                "size": {
+                  "type": "number",
+                  "description": "px (10)"
+                }
+              }
+            },
+            "description": "Optional: strokes painted on the object"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "add",
+              "subtract",
+              "intersect"
+            ]
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.foreground",
+            "outline": [
+              [
+                90,
+                60
+              ],
+              [
+                340,
+                50
+              ],
+              [
+                350,
+                280
+              ],
+              [
+                80,
+                290
+              ]
+            ],
+            "strokes": [
+              {
+                "points": [
+                  [
+                    200,
+                    150
+                  ],
+                  [
+                    240,
+                    180
+                  ]
+                ],
+                "size": 20
+              }
+            ]
+          }
+        ]
+      },
+      "Op_selection_transform": {
+        "type": "object",
+        "title": "selection.transform",
+        "description": "Rotate / scale the selection outline (about its centre unless \"about\" is given), or apply a matrix",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.transform"
+          },
+          "scale": {
+            "type": "number",
+            "description": "Both axes (1 = unchanged)"
+          },
+          "scaleX": {
+            "type": "number",
+            "description": ""
+          },
+          "scaleY": {
+            "type": "number",
+            "description": ""
+          },
+          "rotate": {
+            "type": "number",
+            "description": "Degrees, clockwise"
+          },
+          "about": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[x, y] in canvas pixels"
+          },
+          "matrix": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 6,
+            "maxItems": 6,
+            "description": "Document-space affine [a, b, c, d, e, f]"
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.transform",
+            "rotate": 15,
+            "scale": 1.2
+          }
+        ]
+      },
+      "Op_channel_save": {
+        "type": "object",
+        "title": "channel.save",
+        "description": "Save the selection as a named channel (stored with the document)",
+        "required": [
+          "type",
+          "name"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "channel.save"
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "channel.save",
+            "name": "Sky"
+          }
+        ]
+      },
+      "Op_channel_load": {
+        "type": "object",
+        "title": "channel.load",
+        "description": "Load a saved channel as the selection",
+        "required": [
+          "type",
+          "name"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "channel.load"
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "add",
+              "subtract",
+              "intersect"
+            ]
+          }
+        },
+        "examples": [
+          {
+            "type": "channel.load",
+            "name": "Sky",
+            "mode": "add"
+          }
+        ]
+      },
+      "Op_channel_remove": {
+        "type": "object",
+        "title": "channel.remove",
+        "description": "Delete a saved channel",
+        "required": [
+          "type",
+          "name"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "channel.remove"
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "channel.remove",
+            "name": "Sky"
+          }
+        ]
+      },
+      "Op_selection_translate": {
+        "type": "object",
+        "title": "selection.translate",
+        "description": "Move the selection outline (not the pixels)",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.translate"
+          },
+          "dx": {
+            "type": "number",
+            "description": "px"
+          },
+          "dy": {
+            "type": "number",
+            "description": "px"
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.translate",
+            "dx": 20,
+            "dy": 0
+          }
+        ]
+      },
+      "Op_selection_paint": {
+        "type": "object",
+        "title": "selection.paint",
+        "description": "Quick mask: add to (or subtract from) the selection with a brush stroke",
+        "required": [
+          "type",
+          "stroke"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.paint"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "add",
+              "subtract"
+            ]
+          },
+          "stroke": {
+            "type": "object",
+            "required": [
+              "points"
+            ],
+            "properties": {
+              "points": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "[x, y] in canvas pixels"
+                },
+                "minItems": 1,
+                "description": "Stroke points [[x, y], ...] in canvas pixels"
+              },
+              "size": {
+                "type": "number",
+                "description": "px (20)"
+              },
+              "hardness": {
+                "type": "number",
+                "description": "0–1 (0.75)"
+              }
+            }
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.paint",
+            "mode": "add",
+            "stroke": {
+              "points": [
+                [
+                  100,
+                  100
+                ],
+                [
+                  200,
+                  120
+                ]
+              ],
+              "size": 40
+            }
+          }
+        ]
+      },
+      "Op_selection_modify": {
+        "type": "object",
+        "title": "selection.modify",
+        "description": "Feather, grow, shrink, or turn into a border",
+        "required": [
+          "type",
+          "kind",
+          "radius"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "selection.modify"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "feather",
+              "grow",
+              "shrink",
+              "border"
+            ]
+          },
+          "radius": {
+            "type": "number",
+            "description": "px"
+          }
+        },
+        "examples": [
+          {
+            "type": "selection.modify",
+            "kind": "feather",
+            "radius": 8
+          }
+        ]
+      },
+      "Op_edit_clear": {
+        "type": "object",
+        "title": "edit.clear",
+        "description": "Erase the selected area of a layer",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "edit.clear"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          }
+        },
+        "examples": [
+          {
+            "type": "edit.clear",
+            "id": "L2"
+          }
+        ]
+      },
+      "Op_edit_fill": {
+        "type": "object",
+        "title": "edit.fill",
+        "description": "New fill layer covering the selection (or the canvas)",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "edit.fill"
+          },
+          "color": {
+            "type": "string",
+            "description": "CSS color, e.g. \"#ff8800\""
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "edit.fill",
+            "color": "#ff0000"
+          }
+        ]
+      },
+      "Op_edit_bucket": {
+        "type": "object",
+        "title": "edit.bucket",
+        "description": "Bucket fill: similar colors around a point, as a new fill layer",
+        "required": [
+          "type",
+          "x",
+          "y"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "edit.bucket"
+          },
+          "x": {
+            "type": "number",
+            "description": ""
+          },
+          "y": {
+            "type": "number",
+            "description": ""
+          },
+          "color": {
+            "type": "string",
+            "description": "CSS color, e.g. \"#ff8800\""
+          },
+          "threshold": {
+            "type": "number",
+            "description": "0–255 (32)"
+          },
+          "contiguous": {
+            "type": "boolean",
+            "description": "(true)"
+          },
+          "sample": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          }
+        },
+        "examples": [
+          {
+            "type": "edit.bucket",
+            "x": 10,
+            "y": 10,
+            "color": "#ff0000",
+            "threshold": 32
+          }
+        ]
+      },
+      "Op_edit_strokeSelection": {
+        "type": "object",
+        "title": "edit.strokeSelection",
+        "description": "Stroke the selection outline (new layer)",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "edit.strokeSelection"
+          },
+          "color": {
+            "type": "string",
+            "description": "CSS color, e.g. \"#ff8800\""
+          },
+          "width": {
+            "type": "number",
+            "description": "px (4)"
+          },
+          "position": {
+            "type": "string",
+            "enum": [
+              "center",
+              "inside",
+              "outside"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "edit.strokeSelection",
+            "color": "#000000",
+            "width": 4,
+            "position": "center"
+          }
+        ]
+      },
+      "Op_edit_gradient": {
+        "type": "object",
+        "title": "edit.gradient",
+        "description": "New gradient layer (limited to the selection, if any)",
+        "required": [
+          "type",
+          "x1",
+          "y1",
+          "x2",
+          "y2"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "edit.gradient"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "linear",
+              "radial"
+            ]
+          },
+          "x1": {
+            "type": "number",
+            "description": ""
+          },
+          "y1": {
+            "type": "number",
+            "description": ""
+          },
+          "x2": {
+            "type": "number",
+            "description": ""
+          },
+          "y2": {
+            "type": "number",
+            "description": ""
+          },
+          "from": {
+            "type": "string",
+            "description": "CSS color, e.g. \"#ff8800\""
+          },
+          "to": {
+            "type": "string",
+            "description": "Color or \"transparent\""
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "edit.gradient",
+            "kind": "linear",
+            "x1": 0,
+            "y1": 0,
+            "x2": 800,
+            "y2": 0,
+            "from": "#000000",
+            "to": "transparent"
+          }
+        ]
+      },
+      "Op_paint_stroke": {
+        "type": "object",
+        "title": "paint.stroke",
+        "description": "Brush or eraser stroke on a paint layer (limited to the selection unless clip is false)",
+        "required": [
+          "type",
+          "id",
+          "stroke"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "paint.stroke"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "stroke": {
+            "type": "object",
+            "required": [
+              "points"
+            ],
+            "properties": {
+              "points": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 3
+                },
+                "minItems": 1,
+                "description": "[[x, y], ...] or [[x, y, pressure 0–1], ...]"
+              },
+              "color": {
+                "type": "string",
+                "description": "CSS color, e.g. \"#ff8800\""
+              },
+              "size": {
+                "type": "number",
+                "description": "px"
+              },
+              "erase": {
+                "type": "boolean",
+                "description": "Erase instead of paint"
+              },
+              "opacity": {
+                "type": "number",
+                "description": "0–1 for the whole stroke (1)"
+              },
+              "hardness": {
+                "type": "number",
+                "description": "0–1 edge hardness (1)"
+              },
+              "blend": {
+                "type": "string",
+                "enum": [
+                  "normal",
+                  "multiply",
+                  "screen",
+                  "overlay",
+                  "darken",
+                  "lighten",
+                  "color-dodge",
+                  "color-burn",
+                  "hard-light",
+                  "soft-light",
+                  "difference",
+                  "exclusion",
+                  "hue",
+                  "saturation",
+                  "color",
+                  "luminosity"
+                ],
+                "description": "How the stroke mixes with the layer (normal)"
+              },
+              "clip": {
+                "type": "boolean",
+                "description": "false = ignore the selection"
+              }
+            }
+          }
+        },
+        "examples": [
+          {
+            "type": "paint.stroke",
+            "id": "Ink",
+            "stroke": {
+              "color": "#000000",
+              "size": 6,
+              "points": [
+                [
+                  0,
+                  0
+                ],
+                [
+                  50,
+                  50
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      "Op_paint_clone": {
+        "type": "object",
+        "title": "paint.clone",
+        "description": "Clone pixels from a source along a stroke onto a paint layer",
+        "required": [
+          "type",
+          "id",
+          "points"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "paint.clone"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "minItems": 1,
+            "description": "Stroke points [[x, y], ...] in canvas pixels"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[x, y] in canvas pixels"
+          },
+          "offset": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[dx, dy] = source − destination"
+          },
+          "size": {
+            "type": "number",
+            "description": "Brush diameter px (20)"
+          },
+          "hardness": {
+            "type": "number",
+            "description": "0–1 edge hardness (0.75)"
+          },
+          "sample": {
+            "type": "string",
+            "description": "\"merged\" (default) or a layer to sample"
+          }
+        },
+        "examples": [
+          {
+            "type": "paint.clone",
+            "id": "Fix",
+            "points": [
+              [
+                100,
+                100
+              ],
+              [
+                140,
+                100
+              ]
+            ],
+            "from": [
+              300,
+              100
+            ],
+            "size": 20
+          }
+        ]
+      },
+      "Op_paint_heal": {
+        "type": "object",
+        "title": "paint.heal",
+        "description": "Heal (GIMP method): clone that blends into the surroundings",
+        "required": [
+          "type",
+          "id",
+          "points"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "paint.heal"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "minItems": 1,
+            "description": "Stroke points [[x, y], ...] in canvas pixels"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[x, y] in canvas pixels"
+          },
+          "offset": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "[dx, dy] = source − destination"
+          },
+          "size": {
+            "type": "number",
+            "description": "Brush diameter px (20)"
+          },
+          "hardness": {
+            "type": "number",
+            "description": "0–1 edge hardness (0.75)"
+          },
+          "sample": {
+            "type": "string",
+            "description": "\"merged\" (default) or a layer to sample"
+          }
+        },
+        "examples": [
+          {
+            "type": "paint.heal",
+            "id": "Fix",
+            "points": [
+              [
+                100,
+                100
+              ]
+            ],
+            "offset": [
+              200,
+              0
+            ],
+            "size": 30
+          }
+        ]
+      },
+      "Op_paint_smudge": {
+        "type": "object",
+        "title": "paint.smudge",
+        "description": "Smudge colors along a stroke (GIMP method)",
+        "required": [
+          "type",
+          "id",
+          "points"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "paint.smudge"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "minItems": 1,
+            "description": "Stroke points [[x, y], ...] in canvas pixels"
+          },
+          "rate": {
+            "type": "number",
+            "description": "0–100 (50)"
+          },
+          "flow": {
+            "type": "number",
+            "description": "0–100 (0)"
+          },
+          "color": {
+            "type": "string",
+            "description": "Mixed in by flow"
+          },
+          "size": {
+            "type": "number",
+            "description": "Brush diameter px (20)"
+          },
+          "hardness": {
+            "type": "number",
+            "description": "0–1 edge hardness (0.75)"
+          },
+          "sample": {
+            "type": "string",
+            "description": "\"merged\" (default) or a layer to sample"
+          }
+        },
+        "examples": [
+          {
+            "type": "paint.smudge",
+            "id": "Fix",
+            "points": [
+              [
+                100,
+                100
+              ],
+              [
+                160,
+                100
+              ]
+            ],
+            "rate": 50
+          }
+        ]
+      },
+      "Op_paint_blur": {
+        "type": "object",
+        "title": "paint.blur",
+        "description": "Blur along a stroke (blur brush)",
+        "required": [
+          "type",
+          "id",
+          "points"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "paint.blur"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "minItems": 1,
+            "description": "Stroke points [[x, y], ...] in canvas pixels"
+          },
+          "strength": {
+            "type": "number",
+            "description": "Blur radius px, 0–100 (4)"
+          },
+          "size": {
+            "type": "number",
+            "description": "Brush diameter px (20)"
+          },
+          "hardness": {
+            "type": "number",
+            "description": "0–1 edge hardness (0.75)"
+          },
+          "sample": {
+            "type": "string",
+            "description": "\"merged\" (default) or a layer to sample"
+          }
+        },
+        "examples": [
+          {
+            "type": "paint.blur",
+            "id": "Fix",
+            "points": [
+              [
+                100,
+                100
+              ],
+              [
+                160,
+                100
+              ]
+            ],
+            "strength": 6
+          }
+        ]
+      },
+      "Op_paint_sharpen": {
+        "type": "object",
+        "title": "paint.sharpen",
+        "description": "Sharpen along a stroke (unsharp-mask brush)",
+        "required": [
+          "type",
+          "id",
+          "points"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "paint.sharpen"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "minItems": 1,
+            "description": "Stroke points [[x, y], ...] in canvas pixels"
+          },
+          "strength": {
+            "type": "number",
+            "description": "0–100 (50)"
+          },
+          "size": {
+            "type": "number",
+            "description": "Brush diameter px (20)"
+          },
+          "hardness": {
+            "type": "number",
+            "description": "0–1 edge hardness (0.75)"
+          },
+          "sample": {
+            "type": "string",
+            "description": "\"merged\" (default) or a layer to sample"
+          }
+        },
+        "examples": [
+          {
+            "type": "paint.sharpen",
+            "id": "Fix",
+            "points": [
+              [
+                100,
+                100
+              ],
+              [
+                160,
+                100
+              ]
+            ],
+            "strength": 50
+          }
+        ]
+      },
+      "Op_paint_dodge": {
+        "type": "object",
+        "title": "paint.dodge",
+        "description": "Lighten along a stroke (GIMP formula)",
+        "required": [
+          "type",
+          "id",
+          "points"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "paint.dodge"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "minItems": 1,
+            "description": "Stroke points [[x, y], ...] in canvas pixels"
+          },
+          "range": {
+            "type": "string",
+            "enum": [
+              "shadows",
+              "midtones",
+              "highlights"
+            ]
+          },
+          "exposure": {
+            "type": "number",
+            "description": "0–100 (50)"
+          },
+          "size": {
+            "type": "number",
+            "description": "Brush diameter px (20)"
+          },
+          "hardness": {
+            "type": "number",
+            "description": "0–1 edge hardness (0.75)"
+          },
+          "sample": {
+            "type": "string",
+            "description": "\"merged\" (default) or a layer to sample"
+          }
+        },
+        "examples": [
+          {
+            "type": "paint.dodge",
+            "id": "Fix",
+            "points": [
+              [
+                100,
+                100
+              ],
+              [
+                160,
+                100
+              ]
+            ],
+            "range": "midtones",
+            "exposure": 50
+          }
+        ]
+      },
+      "Op_paint_burn": {
+        "type": "object",
+        "title": "paint.burn",
+        "description": "Darken along a stroke (GIMP formula)",
+        "required": [
+          "type",
+          "id",
+          "points"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "paint.burn"
+          },
+          "id": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[x, y] in canvas pixels"
+            },
+            "minItems": 1,
+            "description": "Stroke points [[x, y], ...] in canvas pixels"
+          },
+          "range": {
+            "type": "string",
+            "enum": [
+              "shadows",
+              "midtones",
+              "highlights"
+            ]
+          },
+          "exposure": {
+            "type": "number",
+            "description": "0–100 (50)"
+          },
+          "size": {
+            "type": "number",
+            "description": "Brush diameter px (20)"
+          },
+          "hardness": {
+            "type": "number",
+            "description": "0–1 edge hardness (0.75)"
+          },
+          "sample": {
+            "type": "string",
+            "description": "\"merged\" (default) or a layer to sample"
+          }
+        },
+        "examples": [
+          {
+            "type": "paint.burn",
+            "id": "Fix",
+            "points": [
+              [
+                100,
+                100
+              ],
+              [
+                160,
+                100
+              ]
+            ],
+            "range": "highlights",
+            "exposure": 40
+          }
+        ]
+      },
+      "Op_path_add": {
+        "type": "object",
+        "title": "path.add",
+        "description": "Add a bezier path (SVG path data \"d\", or subpaths)",
+        "required": [
+          "type",
+          "path"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "path.add"
+          },
+          "path": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": ""
+              },
+              "d": {
+                "type": "string",
+                "description": "SVG path data: M L H V C S Q T Z (absolute or relative)"
+              },
+              "subpaths": {
+                "$ref": "#/components/schemas/Subpaths"
+              }
+            }
+          }
+        },
+        "examples": [
+          {
+            "type": "path.add",
+            "path": {
+              "name": "Arch",
+              "d": "M 100 300 C 150 120 450 120 500 300 Z"
+            }
+          }
+        ]
+      },
+      "Op_path_update": {
+        "type": "object",
+        "title": "path.update",
+        "description": "Reshape, rename or move a path",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "path.update"
+          },
+          "id": {
+            "type": "string",
+            "description": "Path id (e.g. \"P1\") or name"
+          },
+          "props": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": ""
+              },
+              "d": {
+                "type": "string",
+                "description": ""
+              },
+              "subpaths": {
+                "$ref": "#/components/schemas/Subpaths"
+              }
+            }
+          },
+          "dx": {
+            "type": "number",
+            "description": "Move by"
+          },
+          "dy": {
+            "type": "number",
+            "description": "Move by"
+          }
+        },
+        "examples": [
+          {
+            "type": "path.update",
+            "id": "Arch",
+            "dx": 0,
+            "dy": -50
+          }
+        ]
+      },
+      "Op_path_remove": {
+        "type": "object",
+        "title": "path.remove",
+        "description": "Delete a path",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "path.remove"
+          },
+          "id": {
+            "type": "string",
+            "description": "Path id (e.g. \"P1\") or name"
+          }
+        },
+        "examples": [
+          {
+            "type": "path.remove",
+            "id": "P1"
+          }
+        ]
+      },
+      "Op_path_select": {
+        "type": "object",
+        "title": "path.select",
+        "description": "Path → selection",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "path.select"
+          },
+          "id": {
+            "type": "string",
+            "description": "Path id (e.g. \"P1\") or name"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "add",
+              "subtract",
+              "intersect"
+            ]
+          }
+        },
+        "examples": [
+          {
+            "type": "path.select",
+            "id": "Arch"
+          }
+        ]
+      },
+      "Op_path_stroke": {
+        "type": "object",
+        "title": "path.stroke",
+        "description": "Draw a line along a path (onto a paint layer, or a new one)",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "path.stroke"
+          },
+          "id": {
+            "type": "string",
+            "description": "Path id (e.g. \"P1\") or name"
+          },
+          "color": {
+            "type": "string",
+            "description": "CSS color, e.g. \"#ff8800\""
+          },
+          "size": {
+            "type": "number",
+            "description": "px (4)"
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer id (e.g. \"L3\") or name"
+          },
+          "clip": {
+            "type": "boolean"
+          }
+        },
+        "examples": [
+          {
+            "type": "path.stroke",
+            "id": "Arch",
+            "color": "#000000",
+            "size": 4
+          }
+        ]
+      },
+      "Op_path_fill": {
+        "type": "object",
+        "title": "path.fill",
+        "description": "Fill the inside of a path (new fill layer)",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "path.fill"
+          },
+          "id": {
+            "type": "string",
+            "description": "Path id (e.g. \"P1\") or name"
+          },
+          "color": {
+            "type": "string",
+            "description": "CSS color, e.g. \"#ff8800\""
+          },
+          "name": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "examples": [
+          {
+            "type": "path.fill",
+            "id": "Arch",
+            "color": "#ff8800"
+          }
+        ]
+      },
+      "Op_history_undo": {
+        "type": "object",
+        "title": "history.undo",
+        "description": "Undo the last change",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "history.undo"
+          }
+        },
+        "examples": [
+          {
+            "type": "history.undo"
+          }
+        ]
+      },
+      "Op_history_redo": {
+        "type": "object",
+        "title": "history.redo",
+        "description": "Redo",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "history.redo"
+          }
+        },
+        "examples": [
+          {
+            "type": "history.redo"
+          }
+        ]
+      },
+      "Op": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Op_canvas_new"
+          },
+          {
+            "$ref": "#/components/schemas/Op_canvas_resize"
+          },
+          {
+            "$ref": "#/components/schemas/Op_canvas_crop"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_paste"
+          },
+          {
+            "$ref": "#/components/schemas/Op_doc_import"
+          },
+          {
+            "$ref": "#/components/schemas/Op_canvas_scale"
+          },
+          {
+            "$ref": "#/components/schemas/Op_guide_add"
+          },
+          {
+            "$ref": "#/components/schemas/Op_guide_remove"
+          },
+          {
+            "$ref": "#/components/schemas/Op_guide_clear"
+          },
+          {
+            "$ref": "#/components/schemas/Op_canvas_background"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_add"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_update"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_remove"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_group"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_ungroup"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_move"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_duplicate"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_reorder"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_merge"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_mask"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_maskStroke"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_unmask"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_fromSelection"
+          },
+          {
+            "$ref": "#/components/schemas/Op_text_onPath"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_liquify"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_perspective"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_warp"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_autoLevels"
+          },
+          {
+            "$ref": "#/components/schemas/Op_layer_colorToAlpha"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_set"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_all"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_none"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_invert"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_scissors"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_foreground"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_transform"
+          },
+          {
+            "$ref": "#/components/schemas/Op_channel_save"
+          },
+          {
+            "$ref": "#/components/schemas/Op_channel_load"
+          },
+          {
+            "$ref": "#/components/schemas/Op_channel_remove"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_translate"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_paint"
+          },
+          {
+            "$ref": "#/components/schemas/Op_selection_modify"
+          },
+          {
+            "$ref": "#/components/schemas/Op_edit_clear"
+          },
+          {
+            "$ref": "#/components/schemas/Op_edit_fill"
+          },
+          {
+            "$ref": "#/components/schemas/Op_edit_bucket"
+          },
+          {
+            "$ref": "#/components/schemas/Op_edit_strokeSelection"
+          },
+          {
+            "$ref": "#/components/schemas/Op_edit_gradient"
+          },
+          {
+            "$ref": "#/components/schemas/Op_paint_stroke"
+          },
+          {
+            "$ref": "#/components/schemas/Op_paint_clone"
+          },
+          {
+            "$ref": "#/components/schemas/Op_paint_heal"
+          },
+          {
+            "$ref": "#/components/schemas/Op_paint_smudge"
+          },
+          {
+            "$ref": "#/components/schemas/Op_paint_blur"
+          },
+          {
+            "$ref": "#/components/schemas/Op_paint_sharpen"
+          },
+          {
+            "$ref": "#/components/schemas/Op_paint_dodge"
+          },
+          {
+            "$ref": "#/components/schemas/Op_paint_burn"
+          },
+          {
+            "$ref": "#/components/schemas/Op_path_add"
+          },
+          {
+            "$ref": "#/components/schemas/Op_path_update"
+          },
+          {
+            "$ref": "#/components/schemas/Op_path_remove"
+          },
+          {
+            "$ref": "#/components/schemas/Op_path_select"
+          },
+          {
+            "$ref": "#/components/schemas/Op_path_stroke"
+          },
+          {
+            "$ref": "#/components/schemas/Op_path_fill"
+          },
+          {
+            "$ref": "#/components/schemas/Op_history_undo"
+          },
+          {
+            "$ref": "#/components/schemas/Op_history_redo"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "canvas.new": "#/components/schemas/Op_canvas_new",
+            "canvas.resize": "#/components/schemas/Op_canvas_resize",
+            "canvas.crop": "#/components/schemas/Op_canvas_crop",
+            "layer.paste": "#/components/schemas/Op_layer_paste",
+            "doc.import": "#/components/schemas/Op_doc_import",
+            "canvas.scale": "#/components/schemas/Op_canvas_scale",
+            "guide.add": "#/components/schemas/Op_guide_add",
+            "guide.remove": "#/components/schemas/Op_guide_remove",
+            "guide.clear": "#/components/schemas/Op_guide_clear",
+            "canvas.background": "#/components/schemas/Op_canvas_background",
+            "layer.add": "#/components/schemas/Op_layer_add",
+            "layer.update": "#/components/schemas/Op_layer_update",
+            "layer.remove": "#/components/schemas/Op_layer_remove",
+            "layer.group": "#/components/schemas/Op_layer_group",
+            "layer.ungroup": "#/components/schemas/Op_layer_ungroup",
+            "layer.move": "#/components/schemas/Op_layer_move",
+            "layer.duplicate": "#/components/schemas/Op_layer_duplicate",
+            "layer.reorder": "#/components/schemas/Op_layer_reorder",
+            "layer.merge": "#/components/schemas/Op_layer_merge",
+            "layer.mask": "#/components/schemas/Op_layer_mask",
+            "layer.maskStroke": "#/components/schemas/Op_layer_maskStroke",
+            "layer.unmask": "#/components/schemas/Op_layer_unmask",
+            "layer.fromSelection": "#/components/schemas/Op_layer_fromSelection",
+            "text.onPath": "#/components/schemas/Op_text_onPath",
+            "layer.liquify": "#/components/schemas/Op_layer_liquify",
+            "layer.perspective": "#/components/schemas/Op_layer_perspective",
+            "layer.warp": "#/components/schemas/Op_layer_warp",
+            "layer.autoLevels": "#/components/schemas/Op_layer_autoLevels",
+            "layer.colorToAlpha": "#/components/schemas/Op_layer_colorToAlpha",
+            "selection.set": "#/components/schemas/Op_selection_set",
+            "selection.all": "#/components/schemas/Op_selection_all",
+            "selection.none": "#/components/schemas/Op_selection_none",
+            "selection.invert": "#/components/schemas/Op_selection_invert",
+            "selection.scissors": "#/components/schemas/Op_selection_scissors",
+            "selection.foreground": "#/components/schemas/Op_selection_foreground",
+            "selection.transform": "#/components/schemas/Op_selection_transform",
+            "channel.save": "#/components/schemas/Op_channel_save",
+            "channel.load": "#/components/schemas/Op_channel_load",
+            "channel.remove": "#/components/schemas/Op_channel_remove",
+            "selection.translate": "#/components/schemas/Op_selection_translate",
+            "selection.paint": "#/components/schemas/Op_selection_paint",
+            "selection.modify": "#/components/schemas/Op_selection_modify",
+            "edit.clear": "#/components/schemas/Op_edit_clear",
+            "edit.fill": "#/components/schemas/Op_edit_fill",
+            "edit.bucket": "#/components/schemas/Op_edit_bucket",
+            "edit.strokeSelection": "#/components/schemas/Op_edit_strokeSelection",
+            "edit.gradient": "#/components/schemas/Op_edit_gradient",
+            "paint.stroke": "#/components/schemas/Op_paint_stroke",
+            "paint.clone": "#/components/schemas/Op_paint_clone",
+            "paint.heal": "#/components/schemas/Op_paint_heal",
+            "paint.smudge": "#/components/schemas/Op_paint_smudge",
+            "paint.blur": "#/components/schemas/Op_paint_blur",
+            "paint.sharpen": "#/components/schemas/Op_paint_sharpen",
+            "paint.dodge": "#/components/schemas/Op_paint_dodge",
+            "paint.burn": "#/components/schemas/Op_paint_burn",
+            "path.add": "#/components/schemas/Op_path_add",
+            "path.update": "#/components/schemas/Op_path_update",
+            "path.remove": "#/components/schemas/Op_path_remove",
+            "path.select": "#/components/schemas/Op_path_select",
+            "path.stroke": "#/components/schemas/Op_path_stroke",
+            "path.fill": "#/components/schemas/Op_path_fill",
+            "history.undo": "#/components/schemas/Op_history_undo",
+            "history.redo": "#/components/schemas/Op_history_redo"
+          }
+        }
+      }
+    },
+    "parameters": {
+      "project": {
+        "name": "project",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Project folder name inside the server's workspace (GET /api/projects); default: the project the server was started with"
+      }
+    }
+  }
+}

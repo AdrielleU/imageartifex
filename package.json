@@ -1,0 +1,20 @@
+{
+  "name": "imageartifex",
+  "version": "0.1.0",
+  "description": "Browser image editor + CLI that Claude can drive, with a plain-English change log",
+  "main": "src/store.js",
+  "scripts": {
+    "start": "node bin/artifex.js serve",
+    "test": "node --test test/*.test.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.13",
+    "ag-psd": "^20.2.1"
+  },
+  "bin": {
+    "artifex": "bin/artifex.js"
+  }
+}
